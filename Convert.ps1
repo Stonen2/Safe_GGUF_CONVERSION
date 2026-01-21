@@ -1,93 +1,67 @@
-# ============================================================
-# Safe GGUF Conversion Script (Windows)
-# Prevents system crashes by hard-limiting RAM
-# ============================================================
+# Safe GGUF Conversion Script (Windows PowerShell 5.1 compatible)
 
-# ---------------- CONFIG ----------------
-$PythonExe       = "C:\Users\ISAdmin\Desktop\LLM\venv\Scripts\python.exe"
-$ModelPath       = "E:\LLM"   # path to HF model directory
-$OutType         = "bf16"
-$MemoryLimitGB   = 40        # HARD RAM LIMIT
-$CpuLimitPercent = 80        # CPU throttle
-$TempDir         = "E:\fast_temp"  # MUST exist, ideally NVMe
-$PollSeconds     = 10
-# ----------------------------------------
+$PythonExe = 'C:\Users\ISAdmin\Desktop\LLM\venv\Scripts\python.exe'
+$ModelPath = 'E:\LLM'
+$OutType   = 'bf16'
+$MaxRamGB  = 40
+$TempDir   = 'E:\fast_temp'
+$Poll      = 10
 
-# Ensure temp directory exists
 if (-not (Test-Path $TempDir)) {
     New-Item -ItemType Directory -Path $TempDir | Out-Null
 }
 
-# Environment tuning (reduces fragmentation & RAM spikes)
 $env:TEMP = $TempDir
 $env:TMP  = $TempDir
-$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
-$env:MALLOC_TRIM_THRESHOLD_ = "524288"
 
-# Build arguments
-$Args = "convert_hf_to_gguf.py `"$ModelPath`" --outtype $OutType --outfile E:\gguf\deepseek.gguf --use-temp-file"
+$argsList = @(
+    'convert_hf_to_gguf.py'
+    $ModelPath
+    '--outtype'
+    $OutType
+    '--outfile'
+    'E:\gguf\deepseek.gguf'
+    '--use-temp-file'
+)
 
-# ---------------- JOB OBJECT SETUP ----------------
-Add-Type -AssemblyName System.Runtime.InteropServices
+Write-Host Starting GGUF conversion
+Write-Host RAM watchdog: $MaxRamGB GB
 
-$job  = New-Object System.Diagnostics.Job
-$info = New-Object System.Diagnostics.JobObjectExtendedLimitInformation
-
-# Enable hard memory cap + kill-on-close
-$info.BasicLimitInformation.LimitFlags =
-    [System.Diagnostics.JobObjectLimitFlags]::ProcessMemory `
-    -bor [System.Diagnostics.JobObjectLimitFlags]::KillOnJobClose `
-    -bor [System.Diagnostics.JobObjectLimitFlags]::CpuRateControl
-
-# Memory cap (bytes)
-$info.ProcessMemoryLimit = $MemoryLimitGB * 1GB
-
-# CPU throttle
-$info.CpuRateControlInformation.ControlFlags = 1
-$info.CpuRateControlInformation.CpuRate =
-    [int]($CpuLimitPercent * 100)   # 10000 = 100%
-
-# Apply job limits
-$job.SetExtendedLimitInformation($info)
-
-# ---------------- START PROCESS ----------------
-Write-Host "Starting GGUF conversion with:"
-Write-Host "  RAM cap : $MemoryLimitGB GB"
-Write-Host "  CPU cap : $CpuLimitPercent %"
-Write-Host "  Temp dir: $TempDir"
-Write-Host ""
-
-$proc = Start-Process $PythonExe `
-    -ArgumentList $Args `
+$proc = Start-Process `
+    -FilePath $PythonExe `
+    -ArgumentList $argsList `
     -PassThru `
-    -Priority BelowNormal `
     -WindowStyle Hidden
 
-# Attach to job object
-$job.AddProcess($proc)
+if (-not $proc) {
+    Write-Host Failed to start process
+    exit 1
+}
 
-Write-Host "Process started (PID $($proc.Id))"
-Write-Host "Monitoring memory usage..."
-
-# ---------------- MONITOR LOOP ----------------
+# Set priority AFTER start (PS 5.1 compatible)
 try {
-    while (-not $proc.HasExited) {
-        $p = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
-        if ($p) {
-            $ramGB = [Math]::Round($p.WorkingSet64 / 1GB, 2)
-            Write-Host ("[{0}] RAM: {1} GB" -f (Get-Date -Format HH:mm:ss), $ramGB)
+    $proc.PriorityClass = 'BelowNormal'
+} catch {}
+
+Write-Host Process started. PID: $proc.Id
+Write-Host Monitoring memory usage
+
+while (-not $proc.HasExited) {
+
+    $p = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+
+    if ($p) {
+        $ram = [Math]::Round($p.WorkingSet64 / 1GB, 2)
+        Write-Host RAM usage: $ram GB
+
+        if ($ram -gt $MaxRamGB) {
+            Write-Host RAM limit exceeded. Killing process.
+            Stop-Process -Id $proc.Id -Force
+            break
         }
-        Start-Sleep $PollSeconds
     }
-}
-finally {
-    Write-Host ""
-    Write-Host "Process exited with code $($proc.ExitCode)"
+
+    Start-Sleep $Poll
 }
 
-# ============================================================
-# Notes:
-# - If RAM exceeds limit → process is terminated safely
-# - Convert to f16 ONLY; quantize later using llama.cpp
-# - Increase MemoryLimitGB cautiously for 13B+ models
-# ============================================================
+Write-Host Process exited
