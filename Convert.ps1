@@ -4,12 +4,12 @@
 # ============================================================
 
 # ---------------- CONFIG ----------------
-$PythonExe       = "python"
-$ModelPath       = "model"   # path to HF model directory
-$OutType         = "f16"
+$PythonExe       = "C:\Users\ISAdmin\Desktop\LLM\venv\Scripts\python.exe"
+$ModelPath       = "E:\LLM"   # path to HF model directory
+$OutType         = "bf16"
 $MemoryLimitGB   = 40        # HARD RAM LIMIT
 $CpuLimitPercent = 80        # CPU throttle
-$TempDir         = "D:\fast_temp"  # MUST exist, ideally NVMe
+$TempDir         = "E:\fast_temp"  # MUST exist, ideally NVMe
 $PollSeconds     = 10
 # ----------------------------------------
 
@@ -25,7 +25,7 @@ $env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
 $env:MALLOC_TRIM_THRESHOLD_ = "524288"
 
 # Build arguments
-$Args = "convert_hf_to_gguf.py `"$ModelPath`" --outtype $OutType --use-temp-file"
+$Args = "convert_hf_to_gguf.py `"$ModelPath`" --outtype $OutType --outfile E:\gguf\deepseek.gguf --use-temp-file"
 
 # ---------------- JOB OBJECT SETUP ----------------
 Add-Type -AssemblyName System.Runtime.InteropServices
